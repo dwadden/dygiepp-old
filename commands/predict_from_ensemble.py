@@ -143,8 +143,7 @@ def predict_from_ensemble(trigger_prediction_dirs, trigger_vocab_dirs, arg_predi
             f.write(one_pred + "\n")
 
 
-def main():
-    ensemble_dir = "/data/dwadden/proj/dygie/dygie-experiments/dwadden/models/final_ensemble"
+def main(ensemble_dir):
     trigger_dirs = {k: path.join(ensemble_dir, "scores_trig_{0}".format(k))
                     for k in [0, 1, 2, 3]}
     trigger_vocab_dirs = [path.join(ensemble_dir, "vocabulary_trig_{0}".format(k)) for k in [0, 1, 2 ,3]]
@@ -156,4 +155,5 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    ensemble_dir = argv[1]
+    main(ensemble_dir)
