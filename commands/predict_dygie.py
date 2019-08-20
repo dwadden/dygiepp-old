@@ -10,6 +10,7 @@ usage: predict.py [archive-file] [test-file] [output-file]
 # TODO(dwadden) This breaks right now on relation prediction because json can't do dicts whose keys
 # are tuples.
 
+import torch
 import json
 from sys import argv
 
@@ -115,6 +116,7 @@ def check_lengths(d):
     keys.remove("doc_key")
     keys.remove("clusters")
     keys.remove("predicted_clusters")
+    keys.remove("top_coref")
     lengths = [len(d[k]) for k in keys]
     assert len(set(lengths)) == 1
 
@@ -145,6 +147,22 @@ def predict(archive_file, test_file, output_file, cuda_device):
             predictions = {}
             for k, v in decoded.items():
                 predictions[decode_names[k]] = cleanup(k, v[decode_fields[k]], sentence_starts)
+
+            # Add info about coref predictions, for model examination.
+            output_coref = decoded["coref"]
+            the_scores = output_coref["coreference_scores"][0, :, 1:]
+            _, best_options = the_scores.max(dim=1)
+
+            top_spans = output_coref["top_spans"][0]
+
+            best_antecedents = [top_spans[x] for x in best_options]
+            best_antecedents = (torch.cat([x.unsqueeze(1) for x in best_antecedents], dim=1).
+                                transpose(1, 0))
+            top_coref = dict(top_spans=top_spans.tolist(),
+                             top_antecedents=best_antecedents.tolist())
+            predictions["top_coref"] = top_coref
+
+            # Pull results together.
             res = {}
             res.update(gold_data)
             res.update(predictions)
