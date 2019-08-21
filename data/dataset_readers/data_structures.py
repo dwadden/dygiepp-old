@@ -1,6 +1,10 @@
+from collections import namedtuple
 import json
 from dygie.models.shared import fields_to_batches
 import numpy as np
+
+
+CorefPrediction = namedtuple("CorefPrediction", ["entity", "antecedent"])
 
 
 def get_sentence_of_span(span, sentence_starts, doc_tokens):
@@ -32,7 +36,7 @@ class Dataset:
 class Document:
     def __init__(self, js):
         self._doc_key = js["doc_key"]
-        entries = fields_to_batches(js, ["doc_key", "clusters", "predicted_clusters"])
+        entries = fields_to_batches(js, ["doc_key", "clusters", "predicted_clusters", "top_coref"])
         sentence_lengths = [len(entry["sentences"]) for entry in entries]
         sentence_starts = np.cumsum(sentence_lengths)
         sentence_starts = np.roll(sentence_starts, 1)
@@ -42,6 +46,7 @@ class Document:
                           for sentence_ix, (entry, sentence_start)
                           in enumerate(zip(entries, sentence_starts))]
         if "clusters" in js:
+            self.top_coref = self._parse_top_coref(js["top_coref"]) if "top_coref" in js else None
             self.clusters = [Cluster(entry, i, self)
                              for i, entry in enumerate(js["clusters"])]
         if "predicted_clusters" in js:
@@ -57,9 +62,29 @@ class Document:
     def __len__(self):
         return len(self.sentences)
 
+    def get_sentence_of(self, span):
+        return get_sentence_of_span((span.start_doc, span.end_doc),
+                                    self.sentence_starts, self.n_tokens)
+
     def print_plaintext(self):
         for sent in self:
             print(" ".join(sent.text))
+
+    def _parse_top_coref(self, top_coref):
+        res = []
+        for entity, antecedent in zip(top_coref["top_spans"], top_coref["top_antecedents"]):
+            def make_span(pair):
+                sentence_ix = get_sentence_of_span(pair, self.sentence_starts, self.n_tokens)
+                sentence = self[sentence_ix]
+                span = Span(pair[0], pair[1], sentence.text, sentence.sentence_start)
+                return span
+
+            span_entity = make_span(entity)
+            span_antecedent = make_span(antecedent)
+            res.append(CorefPrediction(span_entity, span_antecedent))
+
+        return res
+
 
 
     def find_cluster(self, entity, predicted=True):
@@ -74,6 +99,46 @@ class Document:
                     return clust
 
         return None
+
+    def find_predicted_coref(self, entity, exact=False):
+        """
+        Search through `top_coref` and see if the entity got predicted as part of a cluster.
+        """
+        matches = []
+        for coref in self.top_coref:
+            pred_ent = coref[0]
+            if pred_ent.compare(entity.span, exact=exact):
+                matches.append(coref)
+
+        return matches
+
+    def find_predicted_referred(self, entity, exact=False):
+        """
+        Search through `top_coref` to find spans whose antecedent is the current entity.
+        """
+        res = []
+
+        for coref in self.top_coref:
+            pred_ante = coref[1]
+            if pred_ante.compare(entity.span, exact=exact):
+                res.append(coref)
+
+        return res
+
+    def get_entity_matches(self, span, exact=False):
+        """
+        Is this span an entity in the document?
+        """
+        all_entities = [x.ner for x in self.sentences]
+        all_entities = [x for y in all_entities for x in y]
+
+        matches = []
+
+        for guess in all_entities:
+            if span.compare(guess.span, exact=exact):
+                matches.append(guess)
+
+        return matches
 
     @property
     def n_tokens(self):
@@ -142,6 +207,15 @@ class Span:
         self.span_sent = (self.start_sent, self.end_sent)
         self.text = text[self.start_sent:self.end_sent + 1]
 
+    def overlaps(self, other):
+        return (self in other) or (other in self)
+
+    def compare(self, other, exact=False):
+        if exact:
+            return self == other
+        else:
+            return self.overlaps(other)
+
     def __repr__(self):
         return str((self.start_sent, self.end_sent, self.text))
 
@@ -153,6 +227,10 @@ class Span:
     def __hash__(self):
         tup = self.span_doc + self.span_sent + (" ".join(self.text),)
         return hash(tup)
+
+    def __contains__(self, other):
+        # True if `other` is in `self`.
+        return (self.start_doc <= other.start_doc) and (self.end_doc >= other.end_doc)
 
 
 class Token:
