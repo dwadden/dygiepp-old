@@ -149,6 +149,17 @@ def predict(archive_file, test_file, output_file, cuda_device):
                 predictions[decode_names[k]] = cleanup(k, v[decode_fields[k]], sentence_starts)
 
             # Add info about coref predictions, for model examination.
+            doc_text = [x["sentence"] for x in doc["metadata"]]
+            doc_text = [x for y in doc_text for x in y]
+            doc_text = " ".join(doc_text)
+            if "Category Cooccurrence Restrictions" in doc_text:
+                # Dump the coref scores to file for viz.
+                output_coref = decoded["coref"]
+                keep = ["coreference_scores", "top_spans"]
+                coref_scores = output_coref["coreference_scores"].detach().cpu().numpy()
+                np.save("/data/dwadden/proj/dygie/dygie-experiments/dwadden/ulme-rebuttal/data/coref_scores.npy",
+                        coref_scores)
+
             output_coref = decoded["coref"]
             the_scores = output_coref["coreference_scores"][0, :, 1:]
             _, best_options = the_scores.max(dim=1)
